@@ -62,15 +62,27 @@ class SignalingClient {
     }
   }
 
-  createRoom() {
+  createRoom(password = null) {
     this.role = 'host';
-    this.send({ type: 'create-room' });
+    const msg = { type: 'create-room' };
+    if (password) {
+      msg.password = password;
+    }
+    this.send(msg);
   }
 
-  joinRoom(code) {
+  joinRoom(code, password = '') {
     this.role = 'viewer';
     this.roomCode = code;
-    this.send({ type: 'join-room', roomCode: code });
+    this.send({ type: 'join-room', roomCode: code, password });
+  }
+
+  setPassword(password) {
+    this.send({ type: 'set-password', password });
+  }
+
+  clearPassword() {
+    this.send({ type: 'clear-password' });
   }
 
   leaveRoom() {

@@ -44,7 +44,7 @@ class SignalingHandler {
   handleMessage(ws, msg) {
     switch (msg.type) {
       case 'create-room':
-        this.handleCreateRoom(ws);
+        this.handleCreateRoom(ws, msg);
         break;
       case 'join-room':
         this.handleJoinRoom(ws, msg);
@@ -72,6 +72,12 @@ class SignalingHandler {
         break;
       case 'ice-candidate':
         this.handleIceCandidate(ws, msg);
+        break;
+      case 'set-password':
+        this.handleSetPassword(ws, msg);
+        break;
+      case 'clear-password':
+        this.handleClearPassword(ws);
         break;
     }
   }
@@ -112,6 +118,7 @@ class SignalingHandler {
     return {
       code: roomCode,
       hostId: room.hostId,
+      hasPassword: room.hasPassword,
       clients: clients.map((c) => ({
         id: c.id,
         role: c.role,
@@ -128,8 +135,9 @@ class SignalingHandler {
     }
   }
 
-  handleCreateRoom(ws) {
-    const room = this.roomManager.createRoom();
+  handleCreateRoom(ws, msg) {
+    const password = msg.password || null;
+    const room = this.roomManager.createRoom(password);
     this.roomManager.setHost(room.code, ws.id);
     ws.roomCode = room.code;
     ws.role = 'host';
@@ -138,16 +146,25 @@ class SignalingHandler {
       type: 'room-created',
       roomCode: room.code,
       clientId: ws.id,
-      role: 'host'
+      role: 'host',
+      hasPassword: room.hasPassword
     }));
+
+    this.broadcastRoomInfo(room.code);
   }
 
   handleJoinRoom(ws, msg) {
     const code = msg.roomCode;
+    const password = msg.password || '';
     const room = this.roomManager.getRoom(code);
 
     if (!room) {
-      ws.send(JSON.stringify({ type: 'error', message: '房间不存在' }));
+      ws.send(JSON.stringify({ type: 'join-error', message: '验证失败，请检查房间码和密码' }));
+      return;
+    }
+
+    if (room.hasPassword && !this.roomManager.verifyRoomPassword(code, password)) {
+      ws.send(JSON.stringify({ type: 'join-error', message: '验证失败，请检查房间码和密码' }));
       return;
     }
 
@@ -160,6 +177,7 @@ class SignalingHandler {
       clientId: ws.id,
       role: 'viewer',
       hostId: room.hostId,
+      hasPassword: room.hasPassword,
       annotations: this.roomManager.getAnnotations(code)
     }));
 
@@ -171,6 +189,39 @@ class SignalingHandler {
     }, ws.id);
 
     this.broadcastRoomInfo(code);
+  }
+
+  handleSetPassword(ws, msg) {
+    if (!ws.roomCode || ws.role !== 'host') {
+      ws.send(JSON.stringify({ type: 'error', message: '无权限操作' }));
+      return;
+    }
+    const password = msg.password;
+    if (!password || password.length < 1) {
+      ws.send(JSON.stringify({ type: 'error', message: '密码不能为空' }));
+      return;
+    }
+    const success = this.roomManager.setPassword(ws.roomCode, password);
+    if (success) {
+      ws.send(JSON.stringify({ type: 'password-set', success: true }));
+      this.broadcastRoomInfo(ws.roomCode);
+    } else {
+      ws.send(JSON.stringify({ type: 'error', message: '设置密码失败' }));
+    }
+  }
+
+  handleClearPassword(ws) {
+    if (!ws.roomCode || ws.role !== 'host') {
+      ws.send(JSON.stringify({ type: 'error', message: '无权限操作' }));
+      return;
+    }
+    const success = this.roomManager.clearPassword(ws.roomCode);
+    if (success) {
+      ws.send(JSON.stringify({ type: 'password-cleared', success: true }));
+      this.broadcastRoomInfo(ws.roomCode);
+    } else {
+      ws.send(JSON.stringify({ type: 'error', message: '取消密码失败' }));
+    }
   }
 
   handleLeaveRoom(ws) {

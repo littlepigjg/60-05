@@ -2,6 +2,7 @@
   const mode = sessionStorage.getItem('mode');
   const savedName = sessionStorage.getItem('userName') || '';
   const savedRoomCode = sessionStorage.getItem('roomCode');
+  const savedPassword = sessionStorage.getItem('roomPassword') || '';
 
   if (!mode || (mode === 'viewer' && !savedRoomCode)) {
     location.href = '/';
@@ -24,6 +25,22 @@
   const partCount = $('#partCount');
   const audioBtn = $('#audioBtn');
   const leaveBtn = $('#leaveBtn');
+  const passwordBtn = $('#passwordBtn');
+  const passwordBadge = $('#passwordBadge');
+  const passwordModal = $('#passwordModal');
+  const passwordModalTitle = $('#passwordModalTitle');
+  const passwordModalClose = $('#passwordModalClose');
+  const newPasswordInput = $('#newPasswordInput');
+  const confirmPasswordInput = $('#confirmPasswordInput');
+  const passwordInputLabel = $('#passwordInputLabel');
+  const passwordError = $('#passwordError');
+  const toggleNewPwd = $('#toggleNewPwd');
+  const toggleConfirmPwd = $('#toggleConfirmPwd');
+  const savePasswordBtn = $('#savePasswordBtn');
+  const cancelPasswordBtn = $('#cancelPasswordBtn');
+  const clearPasswordBtn = $('#clearPasswordBtn');
+
+  let roomHasPassword = false;
 
   roleTag.textContent = mode === 'host' ? '主持人' : '观看者';
   roleTag.className = 'role-tag ' + (mode === 'host' ? 'host' : 'viewer');
@@ -79,6 +96,95 @@
     }
   });
 
+  function togglePasswordVisibility(input, btn) {
+    const isPassword = input.type === 'password';
+    input.type = isPassword ? 'text' : 'password';
+    btn.innerHTML = isPassword
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+  }
+
+  function openPasswordModal() {
+    passwordError.textContent = '';
+    newPasswordInput.value = '';
+    confirmPasswordInput.value = '';
+    newPasswordInput.type = 'password';
+    confirmPasswordInput.type = 'password';
+    toggleNewPwd.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    toggleConfirmPwd.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+
+    if (roomHasPassword) {
+      passwordModalTitle.textContent = '修改房间密码';
+      passwordInputLabel.textContent = '新密码';
+      clearPasswordBtn.style.display = 'inline-block';
+    } else {
+      passwordModalTitle.textContent = '设置房间密码';
+      passwordInputLabel.textContent = '设置密码';
+      clearPasswordBtn.style.display = 'none';
+    }
+
+    passwordModal.style.display = 'flex';
+    setTimeout(() => newPasswordInput.focus(), 100);
+  }
+
+  function closePasswordModal() {
+    passwordModal.style.display = 'none';
+  }
+
+  function updatePasswordBadge(hasPassword) {
+    roomHasPassword = hasPassword;
+    if (hasPassword) {
+      passwordBadge.style.display = 'inline-flex';
+    } else {
+      passwordBadge.style.display = 'none';
+    }
+  }
+
+  toggleNewPwd.addEventListener('click', () => {
+    togglePasswordVisibility(newPasswordInput, toggleNewPwd);
+  });
+
+  toggleConfirmPwd.addEventListener('click', () => {
+    togglePasswordVisibility(confirmPasswordInput, toggleConfirmPwd);
+  });
+
+  passwordBtn.addEventListener('click', openPasswordModal);
+  passwordModalClose.addEventListener('click', closePasswordModal);
+  cancelPasswordBtn.addEventListener('click', closePasswordModal);
+
+  passwordModal.addEventListener('click', (e) => {
+    if (e.target === passwordModal) {
+      closePasswordModal();
+    }
+  });
+
+  savePasswordBtn.addEventListener('click', () => {
+    const pwd = newPasswordInput.value;
+    const confirmPwd = confirmPasswordInput.value;
+
+    if (!pwd) {
+      passwordError.textContent = '请输入密码';
+      return;
+    }
+    if (pwd.length < 1) {
+      passwordError.textContent = '密码不能为空';
+      return;
+    }
+    if (pwd !== confirmPwd) {
+      passwordError.textContent = '两次输入的密码不一致';
+      return;
+    }
+
+    passwordError.textContent = '';
+    signaling.setPassword(pwd);
+  });
+
+  clearPasswordBtn.addEventListener('click', () => {
+    if (confirm('确定要取消密码保护吗？取消后任何人都可以通过房间码加入房间。')) {
+      signaling.clearPassword();
+    }
+  });
+
   audioBtn.addEventListener('click', async () => {
     const enabled = await webrtc.toggleAudio();
     audioBtn.classList.toggle('active', enabled);
@@ -96,12 +202,15 @@
   signaling.on('room-created', (msg) => {
     signaling.roomCode = msg.roomCode;
     roomCodeText.textContent = msg.roomCode;
+    updatePasswordBadge(msg.hasPassword || false);
+    passwordBtn.style.display = 'inline-flex';
     UI.toast('房间创建成功，房间码: ' + msg.roomCode);
   });
 
   signaling.on('room-joined', (msg) => {
     signaling.roomCode = msg.roomCode;
     roomCodeText.textContent = msg.roomCode;
+    updatePasswordBadge(msg.hasPassword || false);
     if (msg.annotations && msg.annotations.length) {
       annotation.loadInitial(msg.annotations);
     }
@@ -111,8 +220,31 @@
     }, 400);
   });
 
+  signaling.on('join-error', (msg) => {
+    UI.toast(msg.message || '加入房间失败');
+    waitTitle.textContent = '加入失败';
+    waitSubtitle.textContent = msg.message || '请检查房间码和密码';
+    connStatus.style.background = '#dc2626';
+    connStatus.textContent = '验证失败';
+  });
+
+  signaling.on('password-set', (msg) => {
+    if (msg.success) {
+      UI.toast('密码设置成功');
+      closePasswordModal();
+    }
+  });
+
+  signaling.on('password-cleared', (msg) => {
+    if (msg.success) {
+      UI.toast('已取消密码保护，房间变为公开');
+      closePasswordModal();
+    }
+  });
+
   signaling.on('room-info', (msg) => {
     roomInfo = msg.info;
+    updatePasswordBadge(msg.info.hasPassword || false);
     renderParticipants(msg.info);
   });
 
@@ -226,11 +358,12 @@
   if (mode === 'host') {
     waitTitle.textContent = '正在请求屏幕共享权限...';
     waitSubtitle.textContent = '请选择要共享的窗口或屏幕';
+    passwordBtn.style.display = 'none';
     try {
       const stream = await webrtc.acquireDisplay();
       videoPlayer.srcObject = stream;
       waitingScreen.style.display = 'none';
-      signaling.createRoom();
+      signaling.createRoom(savedPassword || null);
       scheduleResize();
     } catch (e) {
       waitTitle.textContent = '屏幕共享未授权';
@@ -240,8 +373,8 @@
       UI.toast('需要授权屏幕捕获才能继续');
     }
   } else {
-    waitTitle.textContent = '等待主持人开始共享...';
+    waitTitle.textContent = '正在加入房间...';
     waitSubtitle.textContent = '房间码: ' + savedRoomCode;
-    signaling.joinRoom(savedRoomCode);
+    signaling.joinRoom(savedRoomCode, savedPassword || '');
   }
 })();
